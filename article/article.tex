@@ -1,0 +1,185 @@
+\documentclass[a4paper,12pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{biblatex}
+\usepackage{tabularx}
+\usepackage[a4paper, margin=2cm]{geometry}
+
+
+\addbibresource{references.bib}
+
+\title{Detecting errors in prescriptions using Artificial Intelligence and Granular Computing : A study based off the Mimic IV database}
+\author{Jules Voyer}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+During this research we tried to build an error detection model for hospital prescriptions based on the public Mimic IV database. It deals with classification models, data processing, and granular computing.
+\end{abstract}
+
+\section{Introduction}
+\subsection{Context and relevance}
+
+Prescribing errors can occur at different levels of the medical process. They include dosage errors, inappropriate routes of administration, unidentified drug interactions, and omissions in indications. For example, a study revealed that 42,9 \% of errors involved route of administration, while 28,6 \% involved incorrect dosing frequency \cite{Ouzar2024}. These errors may be exacerbated by factors such as workload or lack of protocol standardization \cite{Unknown2022}.
+Other errors include undetected biological incompatibilities, such as a toxic interaction with drugs already being taken by the patient.
+
+Medication error is one of the major consequences of prescription errors. It represents a major burden on healthcare systems, causing 3,5 \% of hospital deaths. It also increases hospital stays and associated costs. A French study revealed that  51,2 \% of serious adverse reactions could be avoided through better prevention \cite{Unknown2022}. These situations highlight the complexity of clinical decisions and the importance of integrating automated support systems.
+
+\subsection{Objective of the study}
+
+This study aims to achieve detection of prescription errors using artificial intelligence or granular computing. We expected to have either a decision tree for classification or a granularity tree that could iissue and gain inteligence over hidden rules in the data. We also wanted to compare the performance of these models with traditional methods of error detection.
+
+\subsection{Contributions}
+
+While Artificial intelligence models have already been used in the medical field to try and detect prescription errors, I have yet to find a study that uses granular computing to detect errors in prescriptions. This study will therefore contribute to the field by providing a new perspective on the problem.
+
+\section{Material and methods}
+\subsection{Description of the Mimic IV database}
+
+The Mimic IV database is a public database that contains anonymized health data. This data is divided between different schemas. We took interest in the hosp schema, which contains data about hospital stays. The data is organized in tables, with each row representing a different patient. We especially took interest in the \texttt{prescriptions} table, which contains data about the prescriptions made during the hospital stay. The data is organized in columns, with each column representing a different attribute of the prescription :
+
+\renewcommand{\arraystretch}{1.2} % Augmente l'espace entre les lignes
+
+\begin{table}[h]
+    \centering
+    \small
+    \begin{tabularx}{\textwidth}{|l|l|X|}
+        \hline
+        \textbf{Column Name} & \textbf{Data Type} & \textbf{Description} \\
+        \hline
+        \texttt{subject\_id} & \texttt{int4} (FK) & Foreign key referencing the subject identifier. \\
+        \texttt{hadm\_id} & \texttt{int4} (FK) & Foreign key referencing the hospital admission identifier. \\
+        \texttt{pharmacy\_id} & \texttt{int4} (PK) & Primary key for the pharmacy record. \\
+        \texttt{poe\_id} & \texttt{varchar(25)} & Provider Order Entry identifier. \\
+        \texttt{poe\_seq} & \texttt{int4} & Sequence number for the order. \\
+        \texttt{order\_provider\_id} & \texttt{varchar(10)} & Identifier of the provider who placed the order. \\
+        \texttt{starttime} & \texttt{timestamp} & Start time of the medication order. \\
+        \texttt{stoptime} & \texttt{timestamp} & Stop time of the medication order. \\
+        \texttt{drug\_type} & \texttt{varchar(20)} (PK) & Primary key indicating the type of drug. \\
+        \texttt{drug} & \texttt{varchar(255)} (PK) & Primary key indicating the drug name. \\
+        \texttt{formulary\_drug\_cd} & \texttt{varchar(50)} & Formulary drug code. \\
+        \texttt{gsn} & \texttt{varchar(255)} & Typically a 6-digit integer starting with 0. \\
+        \texttt{ndc} & \texttt{varchar(25)} & Typically an 11-digit integer. \\
+        \texttt{prod\_strength} & \texttt{varchar(255)} & Product strength information. \\
+        \texttt{dose\_val\_rx} & \texttt{varchar(100)} & Typically a floating-point value representing the prescribed dose. \\
+        \texttt{dose\_unit\_rx} & \texttt{varchar(50)} & Unit of the prescribed dose. \\
+        \texttt{form\_val\_disp} & \texttt{varchar(50)} & Typically a floating-point value representing the dispensed form. \\
+        \texttt{form\_unit\_disp} & \texttt{varchar(50)} & Unit of the dispensed form. \\
+        \texttt{doses\_per\_24\_hrs} & \texttt{float4} & Number of doses administered per 24 hours. \\
+        \texttt{route} & \texttt{varchar(50)} & Administration route of the drug (e.g., oral, IV). \\
+        \hline
+    \end{tabularx}
+\end{table}
+
+
+\subsection{Data preparation and selection}
+\subsubsection{Identifying medications}
+When considering medications, the first step was to find a key for identifying them. While the \texttt{drug} and \texttt{formulary\_drug\_cd} columns provided quite readable information about the drug prescribed, it was often human input and presented typos or inconsistency between the columns (they showed no inclusion of sort). A lot of missing values were present in those columns too. I then decided to use one of the two identifying codes (NDC or GSN), which were more recognizable and less often empty.
+
+\subsubsections{Processing quantities for drug dispensation [ABORTED]}
+At first I tried to process the text values contained in the \texttt{prod\_strength} column in order to check the coherence in data with what was written in the \texttt{form\_val\_disp} and \texttt{form\_unit\_disp} columns. I used regex to parse it and try and extract the quantity, unit and form of the medication. I will not detail here the request, but here are the conclusions I drew from this : the data contains a lot of values that are not precise enough to be used. For instance, forms such as bags or syringes often lacked information about either concentration or volume, making it impossible to determine the quantity of medication contained.
+
+\subsubsection{Transforming the nature of the data}
+Thus the decision to consider not the quantities of prescription, but rather the presence during a singular stay of simultaneous prescriptions, the interaction of which could be nefarious.
+
+I thus transformed the data table to pivot around the \texttt{hadm\_id}, creating columns for each \texttt{gsn\_code} mentioned in the data, and filling with the number (COUNT) of prescriptions of said medication.
+
+With over 3 thousand different medications, this was more than possible columns for the database to compute (PostgreSQL limits at 1600). 
+
+\subsubsection{Restricting the range of the research for technical purposes}
+I took the decision to restrain my research to 1 type of diagnosis (here Chronic hepatitis C without mention of hepatic coma). I chose a diagnosis which involved less than 1600 different medications and a sufficient number of hospital stays
+(here, a bit more than 5000).
+
+Then, i have an information table with columns representing medications, rows representing hospital stays, and values representing the number of prescriptions for a given (stay, medication) pair.
+
+\subsubsection{Generating errors}
+The database contains only verified prescrtiptions, so it does not have a target feature to train AI models. Thus I had to generate mystakes by randomly duplicating and altering existing rows, with a mutation rate of 5\% of the columns. I create as much "wrong" prescriptions as there are correct ones.
+\\
+\\
+\textbf{\underline{NB :} } With this error generation process, there is no guarantee that a generated "wrong" prescription is indeed medically wrong or even that it is not a duplicate of an existing correct prescription. We are just trying to see if models can find a schema in the correct data that gets destroyed in the made-up incorrect data.
+
+
+\subsection{Analysis methodology}
+
+To enable granular computing, I tried regrouping values in three groups for each medication : 
+\begin{itemize}
+    \item 0 : no prescription
+    \item 1 : 1 prescription
+    \item 2+ : 2 or more prescriptions
+\end{itemize}
+I chose this division based on an overview of the data , because each medication was quite rare and the 0 class held a great importance.
+
+\subsubsection{Granular computing}
+
+Granular computing is a method that aims to transform the data based on the values the different columns can take.
+It requires to create a granulation table in which each row represents a formula of format "column\_name = value". 
+This table needs to get enriched with statistical information such as generality, confidence, coverage and entropy. \cite{Jairi2024}
+
+Then the granulation table is worked on to create a granularity tree by selecting the formulas that give most information about the data.
+In practice, entropy is used as a determining factor to select the formulas that split best the data, especially if some formulas allow for immediate classification of some of the original data.
+The creation of the granularity tree is iterative, at each iteration we select the formulas that enable a deterministic classification and we add them as leafs.
+Then we create an indeterminate node based off the remaining formula with the highest rate of coverage for remaining rows, it will serve as root for the next iteration, and we repeat the process until we reach a stopping condition (either full clasification, maximum depth or impossibility to progress).
+
+\textbf{\underline{NB :}} The granularity tree is not a decision tree, it does not aim to classify the data, but rather to show the hidden rules in the data. It is a tool for understanding the data, not for predicting it. 
+
+\subsubsection{Prediction models}
+I tried using prediction models for classification, such as decision trees and random forests. I used the scikit-learn library for this purpose.
+For these, I tried to predict on the raw data without the classes, and I tried adding an explainability module: SHAP (SHapley Additive exPlanations).
+However, this method may be used to understand how the model works, but it does not provide a clear understanding of the interaction between the features (medications).
+
+
+\section{Results}
+\subsection{Algorithm performance}
+Let $n$ be the number ofprescriptions, and let $m$ the number of drugs prescribed on the dataset
+We have an Info_table of size $ncdot m$.
+As I've grouped the values in each column (drug) into 3 categories, this gives us a total of $3m$ worst-case formulas
+The generality calculation runs through each granule to find out its size.
+
+In the worst case, each granule is of size $n$.
+
+We therefore have a time-complexity function $O(nm)$.
+To count the classes of a group of objects: we search the value of one sample in \texttt{info_table}: complexity in $O(n)$. For a sample size k: complexity in $O(kn)$ 
+To compute formula confidence: we have $3m$  formulas of worst-case size $n$. For each of these formulas, we count the classes of the granule in complexity $O(n\cdot n)$ according to the previous formula.
+This gives a complexity of $O(m\cdot n^2)$ for formula confidence.
+The same goes for the computation of the coverage of a formula, which gives a complexity of $O(m\cdot n^2)$.
+Finally the computation of the entropy simply uses the forementioned values across the granules table, so it has a complexity of $O(m)$.
+
+
+
+\subsection{Model performance}
+\subsubsection{Granularity tree}
+The granularity tree I manage to build manages to categorize and find values that were not initially present in the columns: this artificial data gets clustered and put into nodes that show how in was not classical data.
+However, the algorithm stops when it cannot find a formula that has entropy =1. In my case, this happens as soon as level 1 of depth.
+
+\subsubsection{Decision models}
+
+The decision tree and random forest models can prove quite efficient at detecting errors,  reaching accuracy of more than 98\% on the test set. However I have trouble using SHAP to explain which features actually prove decisive in the tree.
+
+\subsection{Result interpretation}
+There is clear potential in the granular computing method, however the MIMIC IV dataset that I used is unfit to decide whether or not a prescription is correct. The constraint of having to generate errors heavily impacts the study as the randomness in the rows created is clearly dissociated from any medical knowledge.
+The decision models show that the data can be classified with a high accuracy, but the lack of explainability in the features used is a major drawback. Also, the error generation process may have created a bias in the data that the models exploit to reach high accuracy. 
+
+\section{Discussion}
+\subsection{Result implications}
+This study, if lead to the end, could allow for rule generation destinated to be used in expert pharmacy softwares currently in place in hospitals. Raising errors for medicamentous interactions or for the presence of a medication that is not supposed to be prescribed with another one could be a major step in the prevention of medication errors.
+
+\subsection{Limits of the study}
+The main limit of this study is the generation of errors. The data generated is not medically relevant and may not reflect the reality of prescription errors. The study would need to be conducted on a dataset that contains real errors to be relevant, or to design a specific, knowledge-supported, error generator. The lack of explainability in the decision models is also a major limit, as it prevents us from understanding the interactions between the features.
+\subsection{Future perspectives}
+Future research could be oriented towards enabling the algorithm to explore a node and give a probabilistic estimation if it cannot manage to have a deterministic one.
+This should include fuzzy logic to manage the uncertainty in the data and the lack of clear rules
+
+
+\section{Conclusion}
+While this study does not manage to reach sufficient proof for the efficiency of granular computing in the classification of prescription errors and rule extraction, it does show that the method has potential. The decision models show that the data can be classified with a high accuracy, but the lack of explainability in the features used is a major drawback. Finally, should this study be continued with a different dataset containing real-life exapmples of prescription errors, it could lead to a major breakthrough in the prevention of medication errors.
+\printbibliography
+\end{document}
