@@ -8,9 +8,11 @@ def getGranularityTree(B_Granules: pd.DataFrame, info_table: pd.DataFrame, max_d
     indéterminé pour chaque granule couvrant au moins un objet restant, et on les ajoute
     à une file d'attente pour traitement ultérieur.
     
-    Lorsque la profondeur maximale est atteinte ou qu'aucune granule ne couvre davantage d'objets,
-    le nœud final se voit attribuer une probabilité d'état calculée comme la moyenne pondérée
-    de confidence_1 par coverage_1.
+    Si tous les objets sont déjà classifiés dans une branche (remaining_objects est vide),
+    le nœud est marqué "Redondant" et n'est pas parcouru ultérieurement.
+    
+    Lorsqu'une branche atteint la profondeur maximale ou ne peut plus être affinée,
+    une probabilité d'état est calculée pour le nœud final.
     """
     from bigtree import Node
     import pandas as pd
@@ -33,13 +35,18 @@ def getGranularityTree(B_Granules: pd.DataFrame, info_table: pd.DataFrame, max_d
     # Création de la racine
     root = Node('Root')
     
-    # Chaque élément de pending est un tuple : (noeud_parent, B_Granules_local, remaining_objects_local, depth)
+    # Chaque élément de pending est un tuple : (nœud_parent, B_Granules_local, remaining_objects_local, depth)
     pending = [(root, B_Granules.copy(), set(info_table.index), 0)]
     
     while pending:
         current_node, current_B, remaining_objects, depth = pending.pop(0)
         
-        # Si la profondeur maximale est atteinte, on calcule la probabilité d'état
+        # Si tous les objets sont déjà classifiés, on marque le nœud comme redondant et on passe à la suite
+        if not remaining_objects:
+            current_node.name = current_node.name + "\nRedondant"
+            continue
+
+        # Si la profondeur maximale est atteinte, on calcule la probabilité d'état et on arrête l'exploration de cette branche
         if depth >= max_depth:
             prob_state = compute_probability_state(current_B)
             current_node.name = current_node.name + f"\nProbabilité d'état = {prob_state:.3f}"
@@ -61,20 +68,20 @@ def getGranularityTree(B_Granules: pd.DataFrame, info_table: pd.DataFrame, max_d
                     remaining_objects -= granule_objs
                 # Retrait des granules déterminatives du DataFrame pour cette branche
                 current_B = current_B[~det_mask]
-                # Puis, on continue à traiter tant qu'il reste des objets non couverts
+                # Continuer à traiter tant qu'il reste des objets non couverts
                 continue
             
-            # Mise à jour des métriques pour la branche
+            # Mise à jour des métriques pour la branche (les fonctions modifient current_B in place)
             getGenerality(current_B, info_table)
             getConfidence(current_B, info_table)
             getCoverage(current_B, info_table)
             getEntropy(current_B, info_table)
             
             # Calcul de l'index de Jaccard pour chaque granule par rapport aux objets restants
-            current_B = current_B.copy()  # éviter le SettingWithCopyWarning
+            current_B = current_B.copy()  # pour éviter le SettingWithCopyWarning
             current_B['jaccard'] = current_B['Granule'].apply(lambda g: jaccard_index(g, remaining_objects))
             
-            # Tri des granules par ordre décroissant de couverture (jaccard)
+            # Tri des granules par ordre décroissant de jaccard
             sorted_B = current_B.sort_values(by='jaccard', ascending=False)
             
             # Création de nœuds indéterminés pour chaque granule qui couvre au moins un objet restant
@@ -87,11 +94,12 @@ def getGranularityTree(B_Granules: pd.DataFrame, info_table: pd.DataFrame, max_d
                     pending.append((new_child, branch_B, branch_remaining, depth + 1))
                     added_child = True
             
-            # Si aucun nœud indéterminé n'a été ajouté, on considère le nœud actuel comme final et on calcule sa probabilité d'état
+            # Si aucun nœud indéterminé n'a été ajouté, le nœud actuel est final : 
+            # on calcule sa probabilité d'état et on sort de la boucle
             if not added_child:
                 prob_state = compute_probability_state(current_B)
                 current_node.name = current_node.name + f"\nProbabilité d'état = {prob_state:.3f}"
                 break
-            # On passe au prochain élément de la file d'attente pour poursuivre l'exploration
+            # Sortir de la boucle pour passer au prochain élément de la file d'attente
             break
     return root
